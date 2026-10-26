@@ -1,0 +1,73 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: amrutam_telemedicine_api
+    restart: unless-stopped
+    ports:
+      - "4000:4000"
+    environment:
+      PORT: 4000
+      NODE_ENV: production
+      LOG_LEVEL: info
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/amrutam_telemedicine?schema=public
+      JWT_SECRET: super-secure-amrutam-jwt-secret-key-at-least-32-chars
+      JWT_EXPIRES_IN: 1d
+      REFRESH_TOKEN_SECRET: super-secure-amrutam-refresh-jwt-secret-key-at-least-32-chars
+      REFRESH_TOKEN_EXPIRES_IN: 7d
+      CORS_ORIGIN: "*"
+      RATE_LIMIT_MAX: 500
+      RATE_LIMIT_WINDOW_MS: 60000
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - amrutam_net
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: amrutam_telemedicine_postgres
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: amrutam_telemedicine
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - amrutam_net
+
+  redis:
+    image: redis:7-alpine
+    container_name: amrutam_telemedicine_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - amrutam_net
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  amrutam_net:
+    driver: bridge

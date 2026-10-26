@@ -1,0 +1,133 @@
+erDiagram
+    users ||--o| profiles : "has profile"
+    users ||--o| doctors : "has doctor profile"
+    users ||--o{ consultations : "patient in consultations"
+    users ||--o{ prescriptions : "patient in prescriptions"
+    users ||--o{ payments : "payer"
+    users ||--o{ audit_logs : "performed action"
+    users ||--o{ idempotency_keys : "owns key"
+
+    doctors ||--o{ availability_slots : "schedules"
+    doctors ||--o{ consultations : "attends"
+    doctors ||--o{ prescriptions : "issues"
+
+    availability_slots ||--o| consultations : "booked by"
+    consultations ||--o| prescriptions : "yields"
+    consultations ||--o| payments : "bills"
+
+    users {
+        string id PK
+        string email UK
+        string passwordHash
+        string role "PATIENT | DOCTOR | ADMIN"
+        boolean isActive
+        datetime createdAt
+        datetime updatedAt
+    }
+
+    profiles {
+        string id PK
+        string userId FK
+        string firstName
+        string lastName
+        string phone
+        datetime dateOfBirth
+        string gender
+        string address
+        datetime createdAt
+        datetime updatedAt
+    }
+
+    doctors {
+        string id PK
+        string userId FK
+        string specialization
+        string qualifications
+        int experienceYears
+        decimal consultationFee
+        string bio
+        boolean isVerified
+        datetime createdAt
+        datetime updatedAt
+    }
+
+    availability_slots {
+        string id PK
+        string doctorId FK
+        datetime startTime
+        datetime endTime
+        string status "AVAILABLE | BOOKED | CANCELLED"
+        datetime createdAt
+        datetime updatedAt
+    }
+
+    consultations {
+        string id PK
+        string consultationNumber UK
+        string patientId FK
+        string doctorId FK
+        string slotId FK,UK
+        string status "BOOKED | IN_PROGRESS | COMPLETED | CANCELLED | NO_SHOW"
+        string reason
+        string notes
+        datetime cancelledAt
+        string cancellationReason
+        datetime createdAt
+        datetime updatedAt
+    }
+
+    prescriptions {
+        string id PK
+        string consultationId FK,UK
+        string doctorId FK
+        string patientId FK
+        string diagnosis
+        json medications
+        string instructions
+        datetime followUpDate
+        datetime issuedAt
+        datetime createdAt
+        datetime updatedAt
+    }
+
+    payments {
+        string id PK
+        string consultationId FK,UK
+        string patientId FK
+        decimal amount
+        string currency
+        string status "PENDING | PAID | FAILED | REFUNDED"
+        string transactionRef UK
+        string provider
+        string paymentMethod
+        json metadata
+        datetime createdAt
+        datetime updatedAt
+    }
+
+    audit_logs {
+        string id PK
+        string userId FK
+        string action
+        string entityType
+        string entityId
+        string ipAddress
+        string userAgent
+        json details
+        datetime createdAt
+    }
+
+    idempotency_keys {
+        string id PK
+        string key
+        string userId FK
+        string requestPath
+        string requestMethod
+        string requestPayloadHash
+        int responseCode
+        json responseBody
+        string status "IN_PROGRESS | COMPLETED | FAILED"
+        datetime createdAt
+        datetime updatedAt
+        datetime expiresAt
+    }

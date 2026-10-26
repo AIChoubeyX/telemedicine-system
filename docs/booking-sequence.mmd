@@ -1,0 +1,46 @@
+sequenceDiagram
+    autonumber
+    actor Patient as Authenticated Patient
+    participant API as Express API (/api/v1/bookings)
+    participant Auth as Auth & RBAC Middleware
+    participant Idem as Idempotency Engine
+    participant DB as PostgreSQL Database
+    participant Audit as Audit Logger
+
+    Patient->>API: POST /api/v1/bookings (Header: Idempotency-Key, Body: slotId, reason)
+    API->>Auth: Verify JWT & Assert Role == PATIENT
+    Auth-->>API: User Context (id, email, role)
+
+    API->>Idem: Check Idempotency (userId, key, payloadHash)
+    alt Key exists & status == COMPLETED
+        Idem-->>API: Cached 201 Response Body
+        API-->>Patient: 201 Created (Header: X-Idempotent-Replay: true)
+    else Key exists & payload mismatch
+        Idem-->>API: IdempotencyPayloadMismatchError
+        API-->>Patient: 422 Unprocessable Entity
+    else Key exists & status == IN_PROGRESS
+        Idem-->>API: IdempotencyInProgressError
+        API-->>Patient: 409 Conflict
+    else Key is new
+        Idem->>DB: INSERT INTO idempotency_keys (status: IN_PROGRESS)
+        Idem-->>API: Acquired lock
+
+        API->>DB: BEGIN TRANSACTION (Serializable / Row-Level Locking)
+        API->>DB: SELECT * FROM availability_slots WHERE id = $slotId FOR UPDATE
+        
+        alt Slot does not exist or status != 'AVAILABLE'
+            DB-->>API: Slot booked or null
+            API->>DB: ROLLBACK TRANSACTION
+            API->>Idem: Release/delete in-progress key
+            API-->>Patient: 409 Conflict (SLOT_UNAVAILABLE)
+        else Slot is AVAILABLE
+            DB-->>API: Slot row locked
+            API->>DB: INSERT INTO consultations (consultationNumber, patientId, doctorId, slotId, status: 'BOOKED')
+            API->>DB: UPDATE availability_slots SET status = 'BOOKED' WHERE id = $slotId
+            API->>DB: INSERT INTO payments (consultationId, amount, status: 'PENDING', ref)
+            API->>Audit: Log BOOKING_CREATED event
+            API->>DB: UPDATE idempotency_keys SET status = 'COMPLETED', responseBody = ...
+            API->>DB: COMMIT TRANSACTION
+            API-->>Patient: 201 Created (Consultation + Payment details)
+        end
+    end

@@ -1,0 +1,467 @@
+openapi: 3.1.0
+info:
+  title: Amrutam Telemedicine Backend API
+  version: 1.0.0
+  description: >
+    Production-grade, secure REST API backend for the Amrutam Telemedicine Platform.
+    Provides comprehensive doctor consultation booking, availability management,
+    consultation lifecycle state transitions, cross-patient protected prescriptions,
+    mock payments, database-backed idempotency, and admin operational analytics.
+servers:
+  - url: http://localhost:4000/api/v1
+    description: Local Development Server
+
+paths:
+  /auth/register:
+    post:
+      summary: Register a new patient
+      tags: [Authentication]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password, firstName, lastName]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string, minLength: 8 }
+                firstName: { type: string }
+                lastName: { type: string }
+                phone: { type: string }
+                dateOfBirth: { type: string, format: date }
+                gender: { type: string, enum: [MALE, FEMALE, OTHER, PREFER_NOT_TO_SAY] }
+                address: { type: string }
+      responses:
+        '201':
+          description: Patient registration successful
+        '400':
+          description: Validation error
+        '409':
+          description: User with email already exists
+
+  /auth/login:
+    post:
+      summary: User authentication
+      tags: [Authentication]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string }
+      responses:
+        '200':
+          description: Login successful with access and refresh tokens
+        '401':
+          description: Invalid email or password
+
+  /auth/me:
+    get:
+      summary: Get current authenticated user profile
+      tags: [Authentication]
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Profile retrieved successfully
+        '401':
+          description: Unauthorized
+
+  /auth/refresh:
+    post:
+      summary: Refresh access token
+      tags: [Authentication]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refreshToken]
+              properties:
+                refreshToken: { type: string }
+      responses:
+        '200':
+          description: Token refreshed
+        '401':
+          description: Invalid or expired refresh token
+
+  /doctors:
+    get:
+      summary: List and search verified doctors
+      tags: [Doctors]
+      parameters:
+        - name: specialization
+          in: query
+          schema: { type: string }
+        - name: search
+          in: query
+          schema: { type: string }
+        - name: page
+          in: query
+          schema: { type: integer, default: 1 }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 20 }
+      responses:
+        '200':
+          description: Doctors list retrieved
+    post:
+      summary: Admin creates a doctor profile
+      tags: [Doctors]
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password, firstName, lastName, specialization, consultationFee]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string, minLength: 8 }
+                firstName: { type: string }
+                lastName: { type: string }
+                specialization: { type: string }
+                experienceYears: { type: integer }
+                consultationFee: { type: number }
+                bio: { type: string }
+      responses:
+        '201':
+          description: Doctor created successfully
+        '403':
+          description: Forbidden (Admin only)
+
+  /doctors/{id}:
+    get:
+      summary: Get doctor by ID
+      tags: [Doctors]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Doctor details
+        '404':
+          description: Doctor not found
+
+  /availability:
+    get:
+      summary: List available slots for a doctor on a specific date
+      tags: [Availability]
+      parameters:
+        - name: doctorId
+          in: query
+          required: true
+          schema: { type: string, format: uuid }
+        - name: date
+          in: query
+          schema: { type: string, format: date, example: '2026-11-01' }
+      responses:
+        '200':
+          description: Available slots retrieved
+    post:
+      summary: Doctor or Admin creates an availability slot
+      tags: [Availability]
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [startTime, endTime]
+              properties:
+                doctorId: { type: string, format: uuid }
+                startTime: { type: string, format: date-time }
+                endTime: { type: string, format: date-time }
+      responses:
+        '201':
+          description: Slot created successfully
+        '409':
+          description: Overlapping availability window conflict
+
+  /bookings:
+    post:
+      summary: Book an available slot (Atomic booking with Idempotency)
+      tags: [Bookings]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string }
+          description: Unique client key to enforce idempotency
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [slotId]
+              properties:
+                slotId: { type: string, format: uuid }
+                reason: { type: string }
+      responses:
+        '201':
+          description: Slot booked successfully
+        '400':
+          description: Missing Idempotency-Key header or invalid data
+        '409':
+          description: Slot already booked (Conflict) or concurrent in-flight request
+        '422':
+          description: Idempotency-Key reuse with different request payload
+    get:
+      summary: List user's consultations
+      tags: [Bookings]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          schema: { type: string, enum: [BOOKED, IN_PROGRESS, COMPLETED, CANCELLED, NO_SHOW] }
+      responses:
+        '200':
+          description: Consultations list retrieved
+
+  /bookings/{id}:
+    get:
+      summary: Get consultation details with relationship check
+      tags: [Bookings]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Consultation details retrieved
+        '403':
+          description: Access denied (Not your consultation)
+        '404':
+          description: Not found
+
+  /bookings/{id}/cancel:
+    post:
+      summary: Cancel a booked consultation
+      tags: [Bookings]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [cancellationReason]
+              properties:
+                cancellationReason: { type: string, minLength: 3 }
+      responses:
+        '200':
+          description: Booking cancelled and slot released
+        '409':
+          description: Cannot cancel consultation in current status
+
+  /consultations/{id}/status:
+    patch:
+      summary: Transition consultation lifecycle status
+      tags: [Consultations]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: string, enum: [IN_PROGRESS, COMPLETED, NO_SHOW, CANCELLED] }
+                notes: { type: string }
+                cancellationReason: { type: string }
+      responses:
+        '200':
+          description: Status transition successful
+        '409':
+          description: Invalid state transition attempted
+
+  /prescriptions:
+    post:
+      summary: Issue prescription for an active/completed consultation
+      tags: [Prescriptions]
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [consultationId, diagnosis, medications]
+              properties:
+                consultationId: { type: string, format: uuid }
+                diagnosis: { type: string }
+                medications:
+                  type: array
+                  items:
+                    type: object
+                    required: [name, dosage, frequency, duration]
+                    properties:
+                      name: { type: string }
+                      dosage: { type: string }
+                      frequency: { type: string }
+                      duration: { type: string }
+                      instructions: { type: string }
+                instructions: { type: string }
+                followUpDate: { type: string, format: date-time }
+      responses:
+        '201':
+          description: Prescription issued successfully
+        '403':
+          description: Forbidden (Not assigned doctor)
+        '409':
+          description: Consultation not eligible or prescription already exists
+    get:
+      summary: List prescriptions for current patient or doctor
+      tags: [Prescriptions]
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: List of prescriptions
+
+  /prescriptions/{id}:
+    get:
+      summary: Retrieve prescription by ID with cross-patient data access protection
+      tags: [Prescriptions]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Prescription details
+        '403':
+          description: Cross-patient data access strictly denied
+        '404':
+          description: Prescription not found
+
+  /payments/{id}/process:
+    post:
+      summary: Process payment for a consultation via mock adapter
+      tags: [Payments]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                paymentMethod: { type: string, enum: [UPI, NET_BANKING, WALLET, CARD_MOCK], default: UPI }
+      responses:
+        '200':
+          description: Payment processed successfully
+        '409':
+          description: Payment already completed or refunded
+
+  /payments/{id}:
+    get:
+      summary: Get payment record details
+      tags: [Payments]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Payment details
+
+  /admin/analytics/overview:
+    get:
+      summary: Database-aggregated operational analytics overview
+      tags: [Admin]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: startDate
+          in: query
+          schema: { type: string, format: date }
+        - name: endDate
+          in: query
+          schema: { type: string, format: date }
+      responses:
+        '200':
+          description: Aggregated analytics returned
+        '403':
+          description: Forbidden (Admin only)
+
+  /admin/analytics/doctor-utilization:
+    get:
+      summary: Doctor utilization statistics
+      tags: [Admin]
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Doctor utilization metrics returned
+
+  /admin/audit-logs:
+    get:
+      summary: Query system audit logs with filters
+      tags: [Admin]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: action
+          in: query
+          schema: { type: string }
+        - name: entityType
+          in: query
+          schema: { type: string }
+        - name: page
+          in: query
+          schema: { type: integer, default: 1 }
+      responses:
+        '200':
+          description: Audit logs returned
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
